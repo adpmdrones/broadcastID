@@ -3,6 +3,13 @@
 #include <MicroNMEA.h>
 #include "SparkFun_Ublox_Arduino_Library.h"
 
+#include "sys/time.h"
+
+#include "BLEDevice.h"
+#include "BLEUtils.h"
+#include "BLEBeacon.h"
+#include "esp_sleep.h"
+
 // Configure TinyGSM library
 #define TINY_GSM_MODEM_SIM800      // Modem is SIM800
 #define TINY_GSM_RX_BUFFER   1024  // Set RX buffer to 1Kb
@@ -69,10 +76,19 @@ TwoWire I2CSensors = TwoWire(1);
 
 // TinyGSM Client for Internet connection
 TinyGsmClient gsmClient(modem);
+
+
+BLEAdvertising *pAdvertising;
+struct timeval now;
+                              
+#define BEACON_UUID           "8ec76ea3-6668-48da-9866-75be8bc86f4d" // UUID 1 128-Bit (may use linux tool uuidgen or random numbers via https://www.uuidgenerator.net/)
+
+esp_bd_addr_t*  ble_addr;
 /////////////////////////////////////////////////////////////////////
 
 /****************************** Function Prototypes *****************/
 bool setPowerBoostKeepOn(int en);
+void setBeacon();
 
 //////////////////////////////////////////////////////////////////////
 void setup()
@@ -96,6 +112,7 @@ void setup()
   digitalWrite(MODEM_PWKEY, LOW);
   digitalWrite(MODEM_RST, HIGH);
   digitalWrite(MODEM_POWER_ON, HIGH);
+  /*
 
   // Set GSM module baud rate and UART pins
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
@@ -110,6 +127,7 @@ void setup()
   if (strlen(simPIN) && modem.getSimStatus() != 3 ) {
     modem.simUnlock(simPIN);
   }
+  */
   
 
 
@@ -120,6 +138,22 @@ void setup()
   }
   myGPS.setI2COutput(COM_TYPE_NMEA); //Set the I2C port to output UBX only (turn off NMEA noise)
   myGPS.saveConfiguration(); //Save the current settings to flash and BBR
+
+  // Create the BLE Device
+  BLEDevice::init("");
+  ble_addr = (BLEDevice::getAddress().getNative());
+
+  Serial.printf("String BLE Address: %s", BLEDevice::getAddress().toString().c_str());
+  pAdvertising = BLEDevice::getAdvertising();
+  
+  setBeacon();
+
+  // Start advertising
+  pAdvertising->start();
+  Serial.println("Advertizing started...");
+  delay(1000);
+  pAdvertising->stop();
+  Serial.println("Advertizing stoped!");
 
 }
 
@@ -143,6 +177,13 @@ void loop()
     Serial.print("Num. satellites: ");
     Serial.println(nmea.getNumSatellites());
   }
+
+  // Start advertising
+  pAdvertising->start();
+  Serial.println("Advertizing started...");
+  delay(1000);
+  pAdvertising->stop();
+  Serial.println("Advertizing stoped!");
 
   delay(1000); //Don't pound too hard on the I2C bus
 }
@@ -169,4 +210,56 @@ bool setPowerBoostKeepOn(int en)
     I2CPower.write(0x35); // 0x37 is default reg value
   }
   return I2CPower.endTransmission() == 0;
+}
+
+void setBeacon() {
+
+  BLEAdvertisementData oAdvertisementData = BLEAdvertisementData();
+  BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
+  
+  //oAdvertisementData.setFlags(0x04); // BR_EDR_NOT_SUPPORTED 0x04
+  
+  std::string strServiceData = "";
+
+  uint8_t adv_data[31];
+  uint8_t adv_data_len;
+
+    adv_data[0] = 0xAA;                     // Preamble
+    adv_data[1] = 0x8E;                     // ACC Addr byte 1
+    adv_data[2] = 0x89;                     // ACC Addr byte 2
+    adv_data[3] = 0xBE;                     // ACC Addr byte 3
+    adv_data[4] = 0xD6;                     // ACC Addr byte 4
+    adv_data[5] = 0x20;                     // PDU HDR byte 1
+    adv_data[6] = 0x25;                     // PDU HDR byte 2
+    adv_data[7] = *(*ble_addr + 0);         // BLE ADDRESS byte 1
+    adv_data[8] = *(*ble_addr + 1);         // BLE ADDRESS byte 2
+    adv_data[9] = *(*ble_addr + 2);         // BLE ADDRESS byte 3
+    adv_data[10] = *(*ble_addr + 3);        // BLE ADDRESS byte 4
+    adv_data[11] = *(*ble_addr + 4);        // BLE ADDRESS byte 5
+    adv_data[12] = *(*ble_addr + 5);        // BLE ADDRESS byte 6
+    adv_data[13] = 0x1E;                     // AD Flag byte 1
+    adv_data[14] = 0xFF;                     // AD Flag byte 2
+    adv_data[15] = 0x02;                     // AD Flag byte 3
+    adv_data[16] = 0x00;                     // AD Flag byte 4
+    adv_data[17] = 0x0D;                     // AD APP
+    adv_data[18] = 0x8E;                     // AD counter
+    adv_data[19] = 0x65;  // UUID 11
+    adv_data[20] = 0x87;  // UUID 12
+    adv_data[21] = 0xAA;  // UUID 13
+    adv_data[22] = 0xEE;  // UUID 14
+    adv_data[23] = 0xEE;  // UUID 15
+    adv_data[24] = 0x07;  // UUID 16
+    adv_data[25] = 0x00;  // Major 1 Value
+    adv_data[26] = 0x20;  // Major 2 Value
+    adv_data[27] = 0x21;  // Minor 1 Value
+    adv_data[28] = 0x22;  // Minor 2 Value
+    adv_data[29] = 0xA0;  // Beacons TX power
+
+    adv_data_len = 30;
+
+  oAdvertisementData.addData(std::string((char*)adv_data, adv_data_len));
+  
+  pAdvertising->setAdvertisementData(oAdvertisementData);
+  pAdvertising->setScanResponseData(oScanResponseData);
+
 }
