@@ -56,6 +56,7 @@ String apiKeyValue = "tPmAT5Ab3j7F9";
 char nmeaBuffer[100];
 
 
+
 SFE_UBLOX_GPS myGPS;
 MicroNMEA nmea(nmeaBuffer, sizeof(nmeaBuffer));
 TinyGsm modem(SerialAT);
@@ -82,7 +83,7 @@ void setup()
 
   // Start I2C communication
   I2CPower.begin(I2C_SDA, I2C_SCL, 400000);
-  I2CSensors.begin(I2C_SDA_2, I2C_SCL_2, 400000);
+  I2CSensors.begin(I2C_SDA_2, I2C_SCL_2);
 
   // Keep power when running from battery
   bool isOk = setPowerBoostKeepOn(1);
@@ -117,6 +118,9 @@ void setup()
     Serial.println(F("Ublox GPS not detected at default I2C address. Please check wiring. Freezing."));
     while (1);
   }
+  myGPS.setI2COutput(COM_TYPE_NMEA); //Set the I2C port to output UBX only (turn off NMEA noise)
+  myGPS.saveConfiguration(); //Save the current settings to flash and BBR
+
 }
 
 void loop()
@@ -129,8 +133,8 @@ void loop()
     long longitude_mdeg = nmea.getLongitude();
 
     Serial.print("Latitude (deg): ");
-    Serial.println(latitude_mdeg / 1000000., 6);
-    Serial.print("Longitude (deg): ");
+    Serial.print(latitude_mdeg / 1000000., 6);
+    Serial.print("\tLongitude (deg): ");
     Serial.println(longitude_mdeg / 1000000., 6);
   }
   else
@@ -140,7 +144,7 @@ void loop()
     Serial.println(nmea.getNumSatellites());
   }
 
-  delay(250); //Don't pound too hard on the I2C bus
+  delay(1000); //Don't pound too hard on the I2C bus
 }
 
 //This function gets called from the SparkFun Ublox Arduino Library
