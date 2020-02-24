@@ -145,7 +145,7 @@ void setup()
 
   Serial.printf("String BLE Address: %s", BLEDevice::getAddress().toString().c_str());
   pAdvertising = BLEDevice::getAdvertising();
-  
+  pAdvertising->setDeviceAddress(*ble_addr, BLE_ADDR_TYPE_PUBLIC);
   setBeacon();
 
   // Start advertising
@@ -165,11 +165,14 @@ void loop()
   {
     long latitude_mdeg = nmea.getLatitude();
     long longitude_mdeg = nmea.getLongitude();
-
+    nmea.getAltitude();
+    nmea.getSpeed();
+    nmea.getSecond()
     Serial.print("Latitude (deg): ");
     Serial.print(latitude_mdeg / 1000000., 6);
     Serial.print("\tLongitude (deg): ");
     Serial.println(longitude_mdeg / 1000000., 6);
+    
   }
   else
   {
@@ -262,4 +265,16 @@ void setBeacon() {
   pAdvertising->setAdvertisementData(oAdvertisementData);
   pAdvertising->setScanResponseData(oScanResponseData);
 
+}
+uint16_t GetTimeStampData(){
+  uint16_t timeStamp = 0;
+
+  uint8_t seconds = nmea.getSecond();
+  uint8_t minutes = nmea.getMinute();
+  uint8_t hours = nmea.getHour();
+  uint8_t hundredth = nmea.getHundredths();
+  Serial.printf("Time in Nmea sentance is %d:%d:%d.%d", hours, minutes, seconds, hundredth);
+  timeStamp = (minutes * 600) + (seconds * 10) + (uint16_t)(hundredth / 10);
+  Serial.printf("TimeStamp value is:  %d", timeStamp);
+  return timeStamp;
 }
