@@ -9,13 +9,17 @@
 #include "BLEUtils.h"
 #include "BLEBeacon.h"
 #include "esp_sleep.h"
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <opendroneid.h>
+
 
 // Configure TinyGSM library
 #define TINY_GSM_MODEM_SIM800      // Modem is SIM800
 #define TINY_GSM_RX_BUFFER   1024  // Set RX buffer to 1Kb
 
 #include <TinyGsmClient.h>
-
 
 
 
@@ -61,8 +65,8 @@ const int  port = 80;                             // server port number
 String apiKeyValue = "tPmAT5Ab3j7F9";
 
 char nmeaBuffer[100];
-
-
+char nmeaBufferforPrint[100];
+uint8_t bufferIdx = 0;
 
 SFE_UBLOX_GPS myGPS;
 MicroNMEA nmea(nmeaBuffer, sizeof(nmeaBuffer));
@@ -84,12 +88,27 @@ struct timeval now;
 #define BEACON_UUID           "8ec76ea3-6668-48da-9866-75be8bc86f4d" // UUID 1 128-Bit (may use linux tool uuidgen or random numbers via https://www.uuidgenerator.net/)
 
 esp_bd_addr_t*  ble_addr;
+
+
+typedef struct {
+  double latitude;
+  double longitude; // In millionths of a degree
+	float altitudeMSL; // In millimetre
+  float altitudeWGS84;
+	float speed;
+  float course;
+}GPS_Data_t;
+GPS_Data_t gps_data;
+ODID_Location_encoded beaconDataEncoded;
+ODID_Location_data beaconData;
 /////////////////////////////////////////////////////////////////////
 
 /****************************** Function Prototypes *****************/
-bool setPowerBoostKeepOn(int en);
-void setBeacon();
-
+bool SetPowerBoostKeepOn(int en);
+void SetBeacon();
+float GetTimeStampData();
+void PreparePacketData(ODID_Location_data * inData, GPS_Data_t* p_gps_data);
+void setBeaconLocationData(ODID_Location_encoded *PEncodedLocation);
 //////////////////////////////////////////////////////////////////////
 void setup()
 {
@@ -98,20 +117,22 @@ void setup()
 
 
   // Start I2C communication
-  I2CPower.begin(I2C_SDA, I2C_SCL, 400000);
+  //I2CPower.begin(I2C_SDA, I2C_SCL, 400000);
   I2CSensors.begin(I2C_SDA_2, I2C_SCL_2);
 
   // Keep power when running from battery
-  bool isOk = setPowerBoostKeepOn(1);
-  Serial.println(String("IP5306 KeepOn ") + (isOk ? "OK" : "FAIL"));
+  //bool isOk = SetPowerBoostKeepOn(1);
+  //Serial.println(String("IP5306 KeepOn ") + (isOk ? "OK" : "FAIL"));
 
   // Set modem reset, enable, power pins
+  /*
   pinMode(MODEM_PWKEY, OUTPUT);
   pinMode(MODEM_RST, OUTPUT);
   pinMode(MODEM_POWER_ON, OUTPUT);
   digitalWrite(MODEM_PWKEY, LOW);
   digitalWrite(MODEM_RST, HIGH);
   digitalWrite(MODEM_POWER_ON, HIGH);
+  */
   /*
 
   // Set GSM module baud rate and UART pins
@@ -138,23 +159,27 @@ void setup()
   }
   myGPS.setI2COutput(COM_TYPE_NMEA); //Set the I2C port to output UBX only (turn off NMEA noise)
   myGPS.saveConfiguration(); //Save the current settings to flash and BBR
+  myGPS.disableNMEAMessage(UBX_NMEA_GLL, COM_PORT_I2C); //Several of these are on by default on virgin ublox board so let's disable them
+  myGPS.disableNMEAMessage(UBX_NMEA_GSA, COM_PORT_I2C);
+  myGPS.disableNMEAMessage(UBX_NMEA_GSV, COM_PORT_I2C);
+  myGPS.disableNMEAMessage(UBX_NMEA_VTG, COM_PORT_I2C);
 
+  myGPS.disableNMEAMessage(UBX_NMEA_RMC, COM_PORT_I2C);
+  myGPS.enableNMEAMessage(UBX_NMEA_GGA, COM_PORT_I2C); //Only leaving GGA/VTG enabled at current navigation rate
+  
+  myGPS.saveConfiguration(); //Save the current settings to flash and BBR
+  
+  
   // Create the BLE Device
   BLEDevice::init("");
   ble_addr = (BLEDevice::getAddress().getNative());
 
   Serial.printf("String BLE Address: %s", BLEDevice::getAddress().toString().c_str());
   pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->setDeviceAddress(*ble_addr, BLE_ADDR_TYPE_PUBLIC);
-  setBeacon();
+  //pAdvertising->setDeviceAddress(*ble_addr, BLE_ADDR_TYPE_PUBLIC);
+  //SetBeacon();
 
-  // Start advertising
-  pAdvertising->start();
-  Serial.println("Advertizing started...");
-  delay(1000);
-  pAdvertising->stop();
-  Serial.println("Advertizing stoped!");
-
+  
 }
 
 void loop()
@@ -163,15 +188,55 @@ void loop()
 
   if(nmea.isValid() == true)
   {
+    bufferIdx = 0;
+    Serial.println(nmeaBufferforPrint);
+    memset(nmeaBufferforPrint, 0, 100);
     long latitude_mdeg = nmea.getLatitude();
     long longitude_mdeg = nmea.getLongitude();
-    nmea.getAltitude();
-    nmea.getSpeed();
-    nmea.getSecond()
+    long alt = 0;
+    nmea.getAltitude(alt);
+    long speed = nmea.getSpeed();
+    long course = nmea.getCourse();
+    gps_data.longitude = longitude_mdeg / 1000000.;
+    gps_data.latitude = latitude_mdeg / 1000000.;
+    gps_data.altitudeMSL = alt / 1000.;
+    gps_data.altitudeWGS84 = gps_data.altitudeMSL + nmea.getGeodicSeperation()/10.;
+    gps_data.course = course / 1000.;
+    gps_data.speed = (speed / 1000.) / 1.944;
+
     Serial.print("Latitude (deg): ");
     Serial.print(latitude_mdeg / 1000000., 6);
     Serial.print("\tLongitude (deg): ");
-    Serial.println(longitude_mdeg / 1000000., 6);
+    Serial.print(longitude_mdeg / 1000000., 6);
+    Serial.print("\tGeodic Seperation (M): ");
+    Serial.print(nmea.getGeodicSeperation());
+    Serial.print("\tCourse RAW (deg ): ");
+    Serial.print(course);
+    Serial.print("\tcourse (deg): ");
+    Serial.println(course / 1000., 6);
+    GetTimeStampData();
+    Serial.println ("GPS Data is: ");
+    Serial.print("Latitude (deg): ");
+    Serial.print(gps_data.latitude);
+    Serial.print("\tLongitude (deg): ");
+    Serial.println(gps_data.longitude);
+    Serial.print("AltitudeMSL (m): ");
+    Serial.print(gps_data.altitudeMSL);
+    Serial.print("\tAltitude_WGS84 (m): ");
+    Serial.print(gps_data.altitudeWGS84);
+    Serial.print("\tspeed (m/s): ");
+    Serial.print(gps_data.speed);
+    Serial.print("\tCourse (deg): ");
+    Serial.println(gps_data.course);
+    Serial.println();
+    PreparePacketData(&beaconData, &gps_data);
+    encodeLocationMessage(&beaconDataEncoded, &beaconData);
+    setBeaconLocationData(&beaconDataEncoded);
+    pAdvertising->start();
+    Serial.println("Advertizing started...");
+    delay(200);
+    pAdvertising->stop();
+    Serial.println("Advertizing stoped!");
     
   }
   else
@@ -181,14 +246,16 @@ void loop()
     Serial.println(nmea.getNumSatellites());
   }
 
+  /*
   // Start advertising
   pAdvertising->start();
   Serial.println("Advertizing started...");
   delay(1000);
   pAdvertising->stop();
   Serial.println("Advertizing stoped!");
+  */
 
-  delay(1000); //Don't pound too hard on the I2C bus
+  delay(10); //Don't pound too hard on the I2C bus
 }
 
 //This function gets called from the SparkFun Ublox Arduino Library
@@ -200,10 +267,11 @@ void SFE_UBLOX_GPS::processNMEA(char incoming)
   //Take the incoming char from the Ublox I2C port and pass it on to the MicroNMEA lib
   //for sentence cracking
   nmea.process(incoming);
+  nmeaBufferforPrint[bufferIdx++] = incoming;
 }
 
 
-bool setPowerBoostKeepOn(int en) 
+bool SetPowerBoostKeepOn(int en) 
 {
   I2CPower.beginTransmission(IP5306_ADDR);
   I2CPower.write(IP5306_REG_SYS_CTL0);
@@ -215,7 +283,7 @@ bool setPowerBoostKeepOn(int en)
   return I2CPower.endTransmission() == 0;
 }
 
-void setBeacon() {
+void SetBeacon() {
 
   BLEAdvertisementData oAdvertisementData = BLEAdvertisementData();
   BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
@@ -266,15 +334,60 @@ void setBeacon() {
   pAdvertising->setScanResponseData(oScanResponseData);
 
 }
-uint16_t GetTimeStampData(){
-  uint16_t timeStamp = 0;
+float GetTimeStampData() {
+  float timeStamp = 0;
 
   uint8_t seconds = nmea.getSecond();
   uint8_t minutes = nmea.getMinute();
   uint8_t hours = nmea.getHour();
   uint8_t hundredth = nmea.getHundredths();
-  Serial.printf("Time in Nmea sentance is %d:%d:%d.%d", hours, minutes, seconds, hundredth);
-  timeStamp = (minutes * 600) + (seconds * 10) + (uint16_t)(hundredth / 10);
-  Serial.printf("TimeStamp value is:  %d", timeStamp);
+  Serial.printf("Time in Nmea sentance is %d:%d:%d.%d\n", hours, minutes, seconds, hundredth);
+  timeStamp = (minutes * 600) + (seconds * 10) + (float)(hundredth / 10.);
+  Serial.printf("TimeStamp value is:  %f\n\n", timeStamp);
   return timeStamp;
+}
+
+void PreparePacketData(ODID_Location_data * inData, GPS_Data_t* p_gps_data) {
+
+  inData->Status = ODID_STATUS_AIRBORNE;
+  inData->Direction = p_gps_data->course;
+  inData->SpeedHorizontal = (p_gps_data->speed > 0)?((p_gps_data->speed >= 254.25)? 254.25: p_gps_data->speed): 0; //If speed is >= 254.25 m/s: 254.25m/s
+  inData->SpeedVertical = 0;
+  inData->Latitude = p_gps_data->latitude;
+  inData->Longitude = p_gps_data->longitude;
+  inData->AltitudeBaro = p_gps_data->altitudeMSL;
+  inData->AltitudeGeo = p_gps_data->altitudeWGS84;
+  inData->HeightType = ODID_HEIGHT_REF_OVER_GROUND;
+  inData->Height = 0;
+  inData->HorizAccuracy = createEnumHorizontalAccuracy(2.5f);
+  inData->VertAccuracy = createEnumVerticalAccuracy(0.5f);
+  inData->BaroAccuracy = createEnumVerticalAccuracy(1.5f);
+  inData->SpeedAccuracy = createEnumSpeedAccuracy(0.5f);
+  inData->TSAccuracy = createEnumTimestampAccuracy(0.2f);
+  inData->TimeStamp = GetTimeStampData();
+  
+}
+
+
+void setBeaconLocationData(ODID_Location_encoded *PEncodedLocation){
+
+  static uint8_t adCounnter = 0;
+  uint8_t adv_data_len = 31;
+  char adv_data[adv_data_len];
+
+  adv_data[0] = 0x1F;                     // Preamble
+  adv_data[1] = 0xFF;                     // ACC Addr byte 1
+  adv_data[2] = 0x02;                     // ACC Addr byte 2
+  adv_data[3] = 0x00;                     // ACC Addr byte 3
+  adv_data[4] = 0x0D;                     // ACC Addr byte 4
+  adv_data[5] = adCounnter++;
+  // 0x02010605122000400002010606094553503332020A03051220004000
+  // 0x02010605122000400002010606094553503332020A03051220004000
+  memcpy(&adv_data[6], PEncodedLocation, 25);
+
+  BLEAdvertisementData oAdvertisementData = BLEAdvertisementData();
+  BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
+  
+  oAdvertisementData.addData(std::string((char*)adv_data, adv_data_len));
+
 }
