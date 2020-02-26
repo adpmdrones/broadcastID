@@ -89,7 +89,7 @@ struct timeval now;
 
 esp_bd_addr_t*  ble_addr;
 
-
+uint8_t timerCounter = 0;
 typedef struct {
   double latitude;
   double longitude; // In millionths of a degree
@@ -101,6 +101,18 @@ typedef struct {
 GPS_Data_t gps_data;
 ODID_Location_encoded beaconDataEncoded;
 ODID_Location_data beaconData;
+
+ODID_BasicID_encoded basicID_enc;
+ODID_BasicID_data basicID;
+
+
+hw_timer_t * timer = NULL;
+volatile SemaphoreHandle_t timerSemaphore;
+portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
+
+volatile uint32_t isrCounter = 0;
+volatile bool updateBasicID = false;
+volatile uint32_t lastIsrAt = 0;
 /////////////////////////////////////////////////////////////////////
 
 /****************************** Function Prototypes *****************/
@@ -109,6 +121,28 @@ void SetBeacon();
 float GetTimeStampData();
 void PreparePacketData(ODID_Location_data * inData, GPS_Data_t* p_gps_data);
 void setBeaconLocationData(ODID_Location_encoded *PEncodedLocation);
+void setBeaconIDData(ODID_BasicID_encoded* pBasicID_enc);
+
+
+void IRAM_ATTR onTimer(){
+  // Increment the counter and set the time of ISR
+  portENTER_CRITICAL_ISR(&timerMux);
+  if(isrCounter == 10) { // 300ms * 10 = 3000ms = 3sec
+    isrCounter = 0;
+    updateBasicID = true;
+  }
+  else {
+    updateBasicID = false;
+    isrCounter++;
+  }
+  lastIsrAt = millis();
+  portEXIT_CRITICAL_ISR(&timerMux);
+  // Give a semaphore that we can check in the loop
+  xSemaphoreGiveFromISR(timerSemaphore, NULL);
+  // It is safe to use digitalRead/Write here if you want to toggle an output
+}
+
+
 //////////////////////////////////////////////////////////////////////
 void setup()
 {
@@ -150,6 +184,7 @@ void setup()
   }
   */
   
+  //Initialize Ticker every 0.5s
 
 
   if (myGPS.begin(I2CSensors, 0x42) == false)
@@ -179,6 +214,20 @@ void setup()
   //pAdvertising->setDeviceAddress(*ble_addr, BLE_ADDR_TYPE_PUBLIC);
   //SetBeacon();
 
+  basicID.IDType = ODID_IDTYPE_CAA_REGISTRATION_ID;
+  basicID.UAType = ODID_UATYPE_ROTORCRAFT;
+  char id[] = "ABCDF1FG916003A12345";
+  strncpy(basicID.UASID, id, sizeof(id));
+  encodeBasicIDMessage(&basicID_enc, &basicID);
+
+
+  // Create semaphore to inform us when the timer has fired
+  timerSemaphore = xSemaphoreCreateBinary();
+  timer = timerBegin(0, 80, true);
+  timerAttachInterrupt(timer, &onTimer, true);
+  timerAlarmWrite(timer, 300000, true);
+  // Start an alarm
+  timerAlarmEnable(timer);
   
 }
 
@@ -203,7 +252,9 @@ void loop()
     gps_data.altitudeWGS84 = gps_data.altitudeMSL + nmea.getGeodicSeperation()/10.;
     gps_data.course = course / 1000.;
     gps_data.speed = (speed / 1000.) / 1.944;
+    GetTimeStampData();
 
+    /*
     Serial.print("Latitude (deg): ");
     Serial.print(latitude_mdeg / 1000000., 6);
     Serial.print("\tLongitude (deg): ");
@@ -214,7 +265,8 @@ void loop()
     Serial.print(course);
     Serial.print("\tcourse (deg): ");
     Serial.println(course / 1000., 6);
-    GetTimeStampData();
+    */
+    
     Serial.println ("GPS Data is: ");
     Serial.print("Latitude (deg): ");
     Serial.print(gps_data.latitude);
@@ -231,12 +283,7 @@ void loop()
     Serial.println();
     PreparePacketData(&beaconData, &gps_data);
     encodeLocationMessage(&beaconDataEncoded, &beaconData);
-    setBeaconLocationData(&beaconDataEncoded);
-    pAdvertising->start();
-    Serial.println("Advertizing started...");
-    delay(200);
-    pAdvertising->stop();
-    Serial.println("Advertizing stoped!");
+    
     
   }
   else
@@ -245,6 +292,42 @@ void loop()
     Serial.print("Num. satellites: ");
     Serial.println(nmea.getNumSatellites());
   }
+
+  if (xSemaphoreTake(timerSemaphore, 0) == pdTRUE){
+    
+    bool isLocation = false;
+    uint32_t counter = 0;
+    uint32_t isrTime= 0;
+    // Read the interrupt count and time
+    portENTER_CRITICAL(&timerMux);
+    isLocation = updateBasicID;
+    counter = isrCounter;
+    isrTime = lastIsrAt;
+    portEXIT_CRITICAL(&timerMux);
+    Serial.printf("ISR COunter is %d", counter);
+    Serial.print(" itat ");
+    Serial.print(isrTime);
+    Serial.println(" ms");
+    if(isLocation) {
+      Serial.println("Updating Static Data");
+      setBeaconIDData(&basicID_enc);
+      pAdvertising->start();
+      Serial.println("Advertizing started...");
+      delay(20);
+      pAdvertising->stop();
+      Serial.println("Advertizing stoped!");
+    }
+    else {
+      Serial.println("Updating Dynamic Data");
+      setBeaconLocationData(&beaconDataEncoded);
+      pAdvertising->start();
+      Serial.println("Advertizing started...");
+      delay(20);
+      pAdvertising->stop();
+      Serial.println("Advertizing stoped!");
+    }
+  }
+//Packet is 0x1EFF02000D5200224142434446314647393136303033413132333435000000
 
   /*
   // Start advertising
@@ -283,57 +366,7 @@ bool SetPowerBoostKeepOn(int en)
   return I2CPower.endTransmission() == 0;
 }
 
-void SetBeacon() {
 
-  BLEAdvertisementData oAdvertisementData = BLEAdvertisementData();
-  BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
-  
-  //oAdvertisementData.setFlags(0x04); // BR_EDR_NOT_SUPPORTED 0x04
-  
-  std::string strServiceData = "";
-
-  uint8_t adv_data[31];
-  uint8_t adv_data_len;
-
-    adv_data[0] = 0xAA;                     // Preamble
-    adv_data[1] = 0x8E;                     // ACC Addr byte 1
-    adv_data[2] = 0x89;                     // ACC Addr byte 2
-    adv_data[3] = 0xBE;                     // ACC Addr byte 3
-    adv_data[4] = 0xD6;                     // ACC Addr byte 4
-    adv_data[5] = 0x20;                     // PDU HDR byte 1
-    adv_data[6] = 0x25;                     // PDU HDR byte 2
-    adv_data[7] = *(*ble_addr + 0);         // BLE ADDRESS byte 1
-    adv_data[8] = *(*ble_addr + 1);         // BLE ADDRESS byte 2
-    adv_data[9] = *(*ble_addr + 2);         // BLE ADDRESS byte 3
-    adv_data[10] = *(*ble_addr + 3);        // BLE ADDRESS byte 4
-    adv_data[11] = *(*ble_addr + 4);        // BLE ADDRESS byte 5
-    adv_data[12] = *(*ble_addr + 5);        // BLE ADDRESS byte 6
-    adv_data[13] = 0x1E;                     // AD Flag byte 1
-    adv_data[14] = 0xFF;                     // AD Flag byte 2
-    adv_data[15] = 0x02;                     // AD Flag byte 3
-    adv_data[16] = 0x00;                     // AD Flag byte 4
-    adv_data[17] = 0x0D;                     // AD APP
-    adv_data[18] = 0x8E;                     // AD counter
-    adv_data[19] = 0x65;  // UUID 11
-    adv_data[20] = 0x87;  // UUID 12
-    adv_data[21] = 0xAA;  // UUID 13
-    adv_data[22] = 0xEE;  // UUID 14
-    adv_data[23] = 0xEE;  // UUID 15
-    adv_data[24] = 0x07;  // UUID 16
-    adv_data[25] = 0x00;  // Major 1 Value
-    adv_data[26] = 0x20;  // Major 2 Value
-    adv_data[27] = 0x21;  // Minor 1 Value
-    adv_data[28] = 0x22;  // Minor 2 Value
-    adv_data[29] = 0xA0;  // Beacons TX power
-
-    adv_data_len = 30;
-
-  oAdvertisementData.addData(std::string((char*)adv_data, adv_data_len));
-  
-  pAdvertising->setAdvertisementData(oAdvertisementData);
-  pAdvertising->setScanResponseData(oScanResponseData);
-
-}
 float GetTimeStampData() {
   float timeStamp = 0;
 
@@ -350,7 +383,7 @@ float GetTimeStampData() {
 void PreparePacketData(ODID_Location_data * inData, GPS_Data_t* p_gps_data) {
 
   inData->Status = ODID_STATUS_AIRBORNE;
-  inData->Direction = p_gps_data->course;
+  inData->Direction =(p_gps_data->course > 0)?((p_gps_data->course >= 360)? 361: p_gps_data->course): 0;
   inData->SpeedHorizontal = (p_gps_data->speed > 0)?((p_gps_data->speed >= 254.25)? 254.25: p_gps_data->speed): 0; //If speed is >= 254.25 m/s: 254.25m/s
   inData->SpeedVertical = 0;
   inData->Latitude = p_gps_data->latitude;
@@ -375,19 +408,62 @@ void setBeaconLocationData(ODID_Location_encoded *PEncodedLocation){
   uint8_t adv_data_len = 31;
   char adv_data[adv_data_len];
 
-  adv_data[0] = 0x1F;                     // Preamble
+  adv_data[0] = 0x1E;                     // Preamble
   adv_data[1] = 0xFF;                     // ACC Addr byte 1
   adv_data[2] = 0x02;                     // ACC Addr byte 2
   adv_data[3] = 0x00;                     // ACC Addr byte 3
   adv_data[4] = 0x0D;                     // ACC Addr byte 4
   adv_data[5] = adCounnter++;
-  // 0x02010605122000400002010606094553503332020A03051220004000
-  // 0x02010605122000400002010606094553503332020A03051220004000
   memcpy(&adv_data[6], PEncodedLocation, 25);
 
   BLEAdvertisementData oAdvertisementData = BLEAdvertisementData();
-  BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
+  //BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
   
   oAdvertisementData.addData(std::string((char*)adv_data, adv_data_len));
+
+  const char * str = std::string((char*)adv_data, adv_data_len).c_str();
+  Serial.print("Packet is 0x");
+  for (uint8_t i = 0; i < adv_data_len; i++) {
+    Serial.printf("%02X", str[i]);
+  }
+  Serial.println();
+
+
+  pAdvertising->setAdvertisementData(oAdvertisementData);
+  //pAdvertising->setScanResponseData(oScanResponseData);
+
+}
+
+
+void setBeaconIDData(ODID_BasicID_encoded* pBasicID_enc) {
+
+  static uint8_t adCounnter = 0;
+  uint8_t adv_data_len = 31;
+  char adv_data[adv_data_len];
+
+  adv_data[0] = 0x1E;                     // Preamble
+  adv_data[1] = 0xFF;                     // ACC Addr byte 1
+  adv_data[2] = 0x02;                     // ACC Addr byte 2
+  adv_data[3] = 0x00;                     // ACC Addr byte 3
+  adv_data[4] = 0x0D;                     // ACC Addr byte 4
+  adv_data[5] = adCounnter++;
+  memcpy(&adv_data[6], pBasicID_enc, 25);
+
+  BLEAdvertisementData oAdvertisementData = BLEAdvertisementData();
+ // BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
+  
+  oAdvertisementData.addData(std::string((char*)adv_data, adv_data_len));
+
+  const char * str = std::string((char*)adv_data, adv_data_len).c_str();
+  Serial.print("Packet is 0x");
+  for (uint8_t i = 0; i < adv_data_len; i++) {
+    Serial.printf("%02X", str[i]);
+  }
+  Serial.println();
+
+
+  pAdvertising->setAdvertisementData(oAdvertisementData);
+  //pAdvertising->setScanResponseData(oScanResponseData);
+
 
 }
