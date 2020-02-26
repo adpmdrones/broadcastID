@@ -1,5 +1,6 @@
 # BROADCAST REMOTE DRONE ID
 This is the project created for client LucaBrizzi
-
-##### NOTE
-DO NOT USE THIS APP AS THIS IS CREATED FROM MY GOOGLE ACCOUNT. IT USES GOOGLE MAPS API KEY WHICH IS LIMITED FOR FREE VERSION. I WILL HELP YOU TO GENERATE YOUR'S KEY AND THEN I'LL REUPLOAD THIS APP WITH YOUR APIKEY.
+* You can use app_release_2.apk
+* The Zoe-M8Q is connected using I2C with the pin connection as shown
+* Connect SDA pin of ZOE-M8Q with ESP32 GPIO 18
+* Connect SCL pin of ZOE-M8Q with ESP32 GPIO 19

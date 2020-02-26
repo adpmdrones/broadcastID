@@ -151,24 +151,23 @@ void setup()
 
 
   // Start I2C communication
-  //I2CPower.begin(I2C_SDA, I2C_SCL, 400000);
+  I2CPower.begin(I2C_SDA, I2C_SCL, 400000);
   I2CSensors.begin(I2C_SDA_2, I2C_SCL_2);
 
   // Keep power when running from battery
-  //bool isOk = SetPowerBoostKeepOn(1);
-  //Serial.println(String("IP5306 KeepOn ") + (isOk ? "OK" : "FAIL"));
+  bool isOk = SetPowerBoostKeepOn(1);
+  Serial.println(String("IP5306 KeepOn ") + (isOk ? "OK" : "FAIL"));
 
   // Set modem reset, enable, power pins
-  /*
+  
   pinMode(MODEM_PWKEY, OUTPUT);
   pinMode(MODEM_RST, OUTPUT);
   pinMode(MODEM_POWER_ON, OUTPUT);
   digitalWrite(MODEM_PWKEY, LOW);
   digitalWrite(MODEM_RST, HIGH);
   digitalWrite(MODEM_POWER_ON, HIGH);
-  */
-  /*
-
+  
+  
   // Set GSM module baud rate and UART pins
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
   delay(3000);
@@ -182,7 +181,7 @@ void setup()
   if (strlen(simPIN) && modem.getSimStatus() != 3 ) {
     modem.simUnlock(simPIN);
   }
-  */
+  
   
   //Initialize Ticker every 0.5s
 
