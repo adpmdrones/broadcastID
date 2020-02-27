@@ -20,7 +20,7 @@
 #define TINY_GSM_RX_BUFFER   1024  // Set RX buffer to 1Kb
 
 #include <TinyGsmClient.h>
-
+#define USE_SERIAL        1
 
 
 /********************************** Private Defines **********************/
@@ -75,9 +75,15 @@ TinyGsm modem(SerialAT);
 // I2C for SIM800 (to keep it running when powered from battery)
 TwoWire I2CPower = TwoWire(0);
 
+#if USE_SERIAL  
+#define RX_PIN      14
+#define TX_PIN      27
+#define SerialSensor  Serial2        
+
+#else
 // I2C for zoe-M8Q sensor
 TwoWire I2CSensors = TwoWire(1);
-
+#endif
 // TinyGSM Client for Internet connection
 TinyGsmClient gsmClient(modem);
 
@@ -85,7 +91,6 @@ TinyGsmClient gsmClient(modem);
 BLEAdvertising *pAdvertising;
 struct timeval now;
                               
-#define BEACON_UUID           "8ec76ea3-6668-48da-9866-75be8bc86f4d" // UUID 1 128-Bit (may use linux tool uuidgen or random numbers via https://www.uuidgenerator.net/)
 
 esp_bd_addr_t*  ble_addr;
 
@@ -152,8 +157,39 @@ void setup()
 
   // Start I2C communication
   I2CPower.begin(I2C_SDA, I2C_SCL, 400000);
-  I2CSensors.begin(I2C_SDA_2, I2C_SCL_2);
 
+  #if USE_SERIAL
+  //Assume that the U-Blox GPS is running at 9600 baud (the default) or at 38400 baud.
+  //Loop until we're in sync and then ensure it's at 38400 baud.
+  do {
+    Serial.println("GPS: trying 38400 baud");
+    SerialSensor.begin(38400, SERIAL_8N1, RX_PIN, TX_PIN);
+    if (myGPS.begin(SerialSensor) == true) break;
+
+    delay(100);
+    Serial.println("GPS: trying 9600 baud");
+    SerialSensor.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
+    if (myGPS.begin(SerialSensor) == true) {
+        Serial.println("GPS: connected at 9600 baud, switching to 38400");
+        myGPS.setSerialRate(38400);
+        delay(100);
+    } else {
+        //myGPS.factoryReset();
+        delay(2000); //Wait a bit before trying again to limit the Serial output
+    }
+  } while(1);
+  Serial.println("GPS serial connected");
+
+  #else
+  I2CSensors.begin(I2C_SDA_2, I2C_SCL_2);
+    //Initialize Ticker every 0.5s
+  delay(100);
+  while (myGPS.begin(I2CSensors, 0x42) == false)
+  {
+    Serial.println(F("Ublox GPS not detected at default I2C address. Please check wiring. Freezing."));
+    //while (1);
+  }
+  #endif
   // Keep power when running from battery
   bool isOk = SetPowerBoostKeepOn(1);
   Serial.println(String("IP5306 KeepOn ") + (isOk ? "OK" : "FAIL"));
@@ -182,15 +218,24 @@ void setup()
     modem.simUnlock(simPIN);
   }
   
+  #if USE_SERIAL
+
+  myGPS.setUART1Output(COM_TYPE_NMEA); //Set the UART port to output UBX only
+  myGPS.setI2COutput(COM_TYPE_NMEA); //Set the I2C port to output UBX only (turn off NMEA noise)
+  myGPS.saveConfiguration(); //Save the current settings to flash and BBR
+
+  myGPS.saveConfiguration(); //Save the current settings to flash and BBR
+  myGPS.disableNMEAMessage(UBX_NMEA_GLL, COM_PORT_UART1); //Several of these are on by default on virgin ublox board so let's disable them
+  myGPS.disableNMEAMessage(UBX_NMEA_GSA, COM_PORT_UART1);
+  myGPS.disableNMEAMessage(UBX_NMEA_GSV, COM_PORT_UART1);
+  myGPS.disableNMEAMessage(UBX_NMEA_VTG, COM_PORT_UART1);
+
+  myGPS.disableNMEAMessage(UBX_NMEA_RMC, COM_PORT_UART1);
+  myGPS.enableNMEAMessage(UBX_NMEA_GGA, COM_PORT_UART1); //Only leaving GGA/VTG enabled at current navigation rate
   
-  //Initialize Ticker every 0.5s
+  #else
 
 
-  if (myGPS.begin(I2CSensors, 0x42) == false)
-  {
-    Serial.println(F("Ublox GPS not detected at default I2C address. Please check wiring. Freezing."));
-    while (1);
-  }
   myGPS.setI2COutput(COM_TYPE_NMEA); //Set the I2C port to output UBX only (turn off NMEA noise)
   myGPS.saveConfiguration(); //Save the current settings to flash and BBR
   myGPS.disableNMEAMessage(UBX_NMEA_GLL, COM_PORT_I2C); //Several of these are on by default on virgin ublox board so let's disable them
@@ -200,7 +245,7 @@ void setup()
 
   myGPS.disableNMEAMessage(UBX_NMEA_RMC, COM_PORT_I2C);
   myGPS.enableNMEAMessage(UBX_NMEA_GGA, COM_PORT_I2C); //Only leaving GGA/VTG enabled at current navigation rate
-  
+  #endif
   myGPS.saveConfiguration(); //Save the current settings to flash and BBR
   
   
