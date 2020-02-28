@@ -20,6 +20,7 @@
 #define TINY_GSM_RX_BUFFER   1024  // Set RX buffer to 1Kb
 
 #include <TinyGsmClient.h>
+#define USE_SIMULATOR     1
 #define USE_SERIAL        1
 
 
@@ -76,8 +77,9 @@ TinyGsm modem(SerialAT);
 TwoWire I2CPower = TwoWire(0);
 
 #if USE_SERIAL  
+
 #define RX_PIN      14
-#define TX_PIN      27
+#define TX_PIN      12
 #define SerialSensor  Serial2        
 
 #else
@@ -158,6 +160,11 @@ void setup()
   // Start I2C communication
   I2CPower.begin(I2C_SDA, I2C_SCL, 400000);
 
+  #if USE_SIMULATOR
+    Serial.println("Using Simulator!");
+    SerialSensor.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
+  #else
+  
   #if USE_SERIAL
   //Assume that the U-Blox GPS is running at 9600 baud (the default) or at 38400 baud.
   //Loop until we're in sync and then ensure it's at 38400 baud.
@@ -189,7 +196,9 @@ void setup()
     Serial.println(F("Ublox GPS not detected at default I2C address. Please check wiring. Freezing."));
     //while (1);
   }
-  #endif
+  #endif // USE_SERIAL
+  #endif // USE_SIMULATOR
+
   // Keep power when running from battery
   bool isOk = SetPowerBoostKeepOn(1);
   Serial.println(String("IP5306 KeepOn ") + (isOk ? "OK" : "FAIL"));
@@ -217,7 +226,10 @@ void setup()
   if (strlen(simPIN) && modem.getSimStatus() != 3 ) {
     modem.simUnlock(simPIN);
   }
-  
+
+  #if USE_SIMULATOR
+  Serial.println("Please start outputting NMEA Sentences at serial");
+  #else
   #if USE_SERIAL
 
   myGPS.setUART1Output(COM_TYPE_NMEA); //Set the UART port to output UBX only
@@ -245,8 +257,10 @@ void setup()
 
   myGPS.disableNMEAMessage(UBX_NMEA_RMC, COM_PORT_I2C);
   myGPS.enableNMEAMessage(UBX_NMEA_GGA, COM_PORT_I2C); //Only leaving GGA/VTG enabled at current navigation rate
-  #endif
+  #endif  // USE SERIAL
   myGPS.saveConfiguration(); //Save the current settings to flash and BBR
+  #endif // USE_SIMULATOR
+  
   
   
   // Create the BLE Device
@@ -277,8 +291,16 @@ void setup()
 
 void loop()
 {
+  #if USE_SIMULATOR
+  while(SerialSensor.available() > 0 ){
+    char incoming = SerialSensor.read();
+    Serial.printf("recieve %c at Serial\n", incoming);
+    nmea.process(incoming);
+    nmeaBufferforPrint[bufferIdx++] = incoming;
+  }
+  #else
   myGPS.checkUblox(); //See if new data is available. Process bytes as they come in.
-
+  #endif
   if(nmea.isValid() == true)
   {
     bufferIdx = 0;
@@ -298,19 +320,6 @@ void loop()
     gps_data.speed = (speed / 1000.) / 1.944;
     GetTimeStampData();
 
-    /*
-    Serial.print("Latitude (deg): ");
-    Serial.print(latitude_mdeg / 1000000., 6);
-    Serial.print("\tLongitude (deg): ");
-    Serial.print(longitude_mdeg / 1000000., 6);
-    Serial.print("\tGeodic Seperation (M): ");
-    Serial.print(nmea.getGeodicSeperation());
-    Serial.print("\tCourse RAW (deg ): ");
-    Serial.print(course);
-    Serial.print("\tcourse (deg): ");
-    Serial.println(course / 1000., 6);
-    */
-    
     Serial.println ("GPS Data is: ");
     Serial.print("Latitude (deg): ");
     Serial.print(gps_data.latitude);
@@ -371,18 +380,7 @@ void loop()
       Serial.println("Advertizing stoped!");
     }
   }
-//Packet is 0x1EFF02000D5200224142434446314647393136303033413132333435000000
-
-  /*
-  // Start advertising
-  pAdvertising->start();
-  Serial.println("Advertizing started...");
-  delay(1000);
-  pAdvertising->stop();
-  Serial.println("Advertizing stoped!");
-  */
-
-  delay(10); //Don't pound too hard on the I2C bus
+  delay(30); //Don't pound too hard on the I2C bus
 }
 
 //This function gets called from the SparkFun Ublox Arduino Library
