@@ -22,10 +22,10 @@ This is the project created for client LucaBrizzi
 * After installation open/start  `Visual Studio Code` and `PlateformIO` screen will automatically apears.
 * Open the Project.(select Broadcast Drone Folder).
 * You can use three modes. 
-  * USE SIMULATOR   
+* USE SIMULATOR   
 
 
-```
+```cpp
     // at line 23 and 24 do this
     #define USE_SIMULATOR     1
     #define USE_SERIAL        1
@@ -35,10 +35,10 @@ This is the project created for client LucaBrizzi
     // USE correct Comport at Simulator, with default settings i.e (Speed = 9600)
 ```
 
-  * USE SERIAL
+* USE SERIAL
 
 
-```
+```cpp
     // at line 23 and 24 do this
     #define USE_SIMULATOR     0
     #define USE_SERIAL        1
@@ -46,10 +46,10 @@ This is the project created for client LucaBrizzi
     #define RX_PIN      14 // connect ZOE-M8Q UART TX pin here
     #define TX_PIN      12 // connect  ZOE-M8Q UART RX pin here
 ```
-  * USE I2C
+* USE I2C
 
 
-```
+```cpp
     // at line 23 and 24 do this
     #define USE_SIMULATOR     0
     #define USE_SERIAL        0
