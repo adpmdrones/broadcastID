@@ -344,7 +344,8 @@ void loop()
     PreparePacketData(&beaconData, &gps_data);
     encodeLocationMessage(&beaconDataEncoded, &beaconData);
 
-    if (now - lastMeasure > 5000) { // update database every 5sec after recieveing the valid NMEA
+    now = millis();	  
+    if (now - lastMeasure > 10000) { // update database every 10sec after recieveing the valid NMEA
       lastMeasure = now;
       UpdateDataBase();
     }
