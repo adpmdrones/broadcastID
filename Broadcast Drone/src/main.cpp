@@ -48,7 +48,7 @@
 /********************************* Global Variables *********************/
 
 // Your GPRS credentials (leave empty, if not needed)
-const char apn[]      = ""; // APN (example: internet.vodafone.pt) use https://wiki.apnchanger.org
+const char apn[]      = "iliad"; // APN (example: internet.vodafone.pt) use https://wiki.apnchanger.org
 const char gprsUser[] = ""; // GPRS User
 const char gprsPass[] = ""; // GPRS Password
 
@@ -58,7 +58,7 @@ const char simPIN[]   = "";
 // Server details
 // The server variable can be just a domain name or it can have a subdomain. It depends on the service you are using
 const char server[] = "test.adpmdrones.com"; // domain name: example.com, maker.ifttt.com, etc
-const char resource[] = "/add.php";         // resource path, for example: /post-data.php
+const char resource[] = "/addnew.php";         // resource path, for example: /post-data.php
 const int  port = 80;                             // server port number
 
 // Keep this API Key value to be compatible with the PHP code provided in the project page. 
@@ -322,7 +322,7 @@ void loop()
     gps_data.latitude = latitude_mdeg / 1000000.;
     gps_data.altitudeMSL = alt / 1000.;
     //gps_data.altitudeWGS84 = gps_data.altitudeMSL + nmea.getGeodicSeperation()/10.;
-    gps_data.altitudeWGS84 = gps_data.altitudeMSL + nmea.getGeodicSeperation()/10.;
+    gps_data.altitudeWGS84 = gps_data.altitudeMSL + 0.0;
     gps_data.course = course / 1000.;
     gps_data.speed = (speed / 1000.) / 1.944;
     GetTimeStampData();
