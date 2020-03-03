@@ -20,7 +20,7 @@
 #define TINY_GSM_RX_BUFFER   1024  // Set RX buffer to 1Kb
 
 #include <TinyGsmClient.h>
-#define USE_SIMULATOR     1
+#define USE_SIMULATOR     0
 #define USE_SERIAL        1
 
 
@@ -57,8 +57,8 @@ const char simPIN[]   = "";
 
 // Server details
 // The server variable can be just a domain name or it can have a subdomain. It depends on the service you are using
-const char server[] = "example.com"; // domain name: example.com, maker.ifttt.com, etc
-const char resource[] = "/post-data.php";         // resource path, for example: /post-data.php
+const char server[] = "test.adpmdrones.com"; // domain name: example.com, maker.ifttt.com, etc
+const char resource[] = "/add.php";         // resource path, for example: /post-data.php
 const int  port = 80;                             // server port number
 
 // Keep this API Key value to be compatible with the PHP code provided in the project page. 
@@ -91,7 +91,7 @@ TinyGsmClient gsmClient(modem);
 
 
 BLEAdvertising *pAdvertising;
-struct timeval now;
+
                               
 
 esp_bd_addr_t*  ble_addr;
@@ -120,6 +120,11 @@ portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 volatile uint32_t isrCounter = 0;
 volatile bool updateBasicID = false;
 volatile uint32_t lastIsrAt = 0;
+char id[] = "ABCDF1FG916003A12345";
+// Timers auxiliar variables
+long now = millis();
+long lastMeasure = 0;
+
 /////////////////////////////////////////////////////////////////////
 
 /****************************** Function Prototypes *****************/
@@ -129,6 +134,7 @@ float GetTimeStampData();
 void PreparePacketData(ODID_Location_data * inData, GPS_Data_t* p_gps_data);
 void setBeaconLocationData(ODID_Location_encoded *PEncodedLocation);
 void setBeaconIDData(ODID_BasicID_encoded* pBasicID_enc);
+void UpdateDataBase(void);
 
 
 void IRAM_ATTR onTimer(){
@@ -315,6 +321,7 @@ void loop()
     gps_data.longitude = longitude_mdeg / 1000000.;
     gps_data.latitude = latitude_mdeg / 1000000.;
     gps_data.altitudeMSL = alt / 1000.;
+    //gps_data.altitudeWGS84 = gps_data.altitudeMSL + nmea.getGeodicSeperation()/10.;
     gps_data.altitudeWGS84 = gps_data.altitudeMSL + nmea.getGeodicSeperation()/10.;
     gps_data.course = course / 1000.;
     gps_data.speed = (speed / 1000.) / 1.944;
@@ -336,8 +343,11 @@ void loop()
     Serial.println();
     PreparePacketData(&beaconData, &gps_data);
     encodeLocationMessage(&beaconDataEncoded, &beaconData);
-    
-    
+
+    if (now - lastMeasure > 5000) { // update database every 5sec after recieveing the valid NMEA
+      lastMeasure = now;
+      UpdateDataBase();
+    }
   }
   else
   {
@@ -369,6 +379,8 @@ void loop()
       delay(20);
       pAdvertising->stop();
       Serial.println("Advertizing stoped!");
+
+      
     }
     else {
       Serial.println("Updating Dynamic Data");
@@ -378,6 +390,7 @@ void loop()
       delay(20);
       pAdvertising->stop();
       Serial.println("Advertizing stoped!");
+
     }
   }
   delay(30); //Don't pound too hard on the I2C bus
@@ -508,4 +521,57 @@ void setBeaconIDData(ODID_BasicID_encoded* pBasicID_enc) {
   //pAdvertising->setScanResponseData(oScanResponseData);
 
 
+}
+
+
+void UpdateDataBase()
+{
+  Serial.print("Connecting to APN: ");
+  Serial.print(apn);
+  if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
+    Serial.println(" fail");
+  }
+  else {
+    Serial.println(" OK");
+    
+    Serial.print("Connecting to ");
+    Serial.print(server);
+    if (!gsmClient.connect(server, port)) {
+      Serial.println(" fail");
+    }
+    else {
+      Serial.println(" OK");
+      // Making an HTTP POST request
+      Serial.println("Performing HTTP POST request...");
+      // Prepare your HTTP POST request data (Temperature in Celsius degrees)
+      String httpRequestData = "lat=" + String(gps_data.latitude)
+                             + "&lon=" + String(gps_data.longitude) + "&broadcastid=" + String(id) + "";
+      
+      gsmClient.print(String("POST ") + resource + " HTTP/1.1\r\n");
+      gsmClient.print(String("Host: ") + server + "\r\n");
+      gsmClient.println("Connection: close");
+      gsmClient.println("Content-Type: application/x-www-form-urlencoded");
+      gsmClient.print("Content-Length: ");
+      gsmClient.println(httpRequestData.length());
+      gsmClient.println();
+      gsmClient.println(httpRequestData);
+
+      unsigned long timeout = millis();
+      while (gsmClient.connected() && millis() - timeout < 10000L) {
+        // Print available data (HTTP response from server)
+        while (gsmClient.available()) {
+          char c = gsmClient.read();
+          Serial.print(c);
+          timeout = millis();
+        }
+      }
+      Serial.println();
+    
+      // Close client and disconnect
+      gsmClient.stop();
+      Serial.println(F("Server disconnected"));
+      modem.gprsDisconnect();
+      Serial.println(F("GPRS disconnected"));
+    }
+  }
 }
